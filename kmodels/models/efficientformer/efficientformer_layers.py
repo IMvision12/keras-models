@@ -132,14 +132,20 @@ class Attention4D(layers.Layer):
         x = ops.matmul(x, self.proj_kernel) + self.proj_bias
         return x
 
-    def save_own_variables(self, store):
-        super().save_own_variables(store)
-        store["resolution"] = self.resolution
-
     def load_own_variables(self, store):
-        try:
-            source_resolution = int(store["resolution"][...])
-        except KeyError:
+        # Infer source resolution from the saved attention_biases shape.
+        bias_idx = None
+        target_vars = self.trainable_variables + self.non_trainable_variables
+        for i, var in enumerate(target_vars):
+            if var is self.attention_biases:
+                bias_idx = i
+                break
+        if bias_idx is not None and str(bias_idx) in store:
+            source_bias_size = store[str(bias_idx)].shape[-1]
+            import math
+
+            source_resolution = int(math.isqrt(source_bias_size))
+        else:
             source_resolution = self.resolution
 
         if source_resolution == self.resolution:

@@ -216,7 +216,11 @@ def rf_detr_encoder_output_proposals(memory, spatial_shapes, bbox_reparam=True):
         proposals.append(proposal)
 
     output_proposals = ops.concatenate(proposals, axis=1)
-    output_proposals = output_proposals + ops.zeros_like(memory[:, :, :4])
+    # Broadcast proposals to match memory's batch dimension.
+    # Multiply by 0 and sum to get a (B, 1, 1) zero tensor that
+    # carries the dynamic batch dimension without slicing.
+    batch_zero = ops.sum(memory * 0, axis=(1, 2), keepdims=True)
+    output_proposals = batch_zero + output_proposals
 
     valid = ops.all(
         (output_proposals > 0.01) & (output_proposals < 0.99),

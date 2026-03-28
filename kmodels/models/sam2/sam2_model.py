@@ -11,7 +11,7 @@ Reference:
 
 import keras
 import numpy as np
-from keras import layers, ops, utils
+from keras import layers, utils
 
 from kmodels.model_registry import register_model
 from kmodels.utils import load_weights_from_config
@@ -24,7 +24,6 @@ from .sam2_layers import (
     SAM2MultiScaleBlock,
     SAM2PositionalEmbedding,
     SAM2PromptEncoderLayer,
-    SAM2SinePositionEmbedding,
 )
 
 
@@ -320,35 +319,26 @@ class SAM2(keras.Model):
 
                 total_block_idx += 1
 
-        fpn_position_encoding = SAM2SinePositionEmbedding(
-            num_pos_feats=self.FPN_HIDDEN_SIZE // 2,
-            normalize=True,
-            name="neck_position_encoding",
-        )
-
         fpn_convs = []
         n = len(backbone_channel_list) - 1
         fpn_hidden_states_list = []
-        fpn_pe_list = []
 
         for i, in_channels in enumerate(backbone_channel_list):
             conv = layers.Conv2D(
                 self.FPN_HIDDEN_SIZE,
                 kernel_size=1,
-                data_format="channels_first",
                 name=f"neck_convs_{i}",
             )
             fpn_convs.append(conv)
 
         fpn_top_down_levels = [2, 3]
 
+        # FPN operates entirely in NHWC (channels_last) for full
+        # backend compatibility including TF CPU.
         prev_features = None
         for i in range(n, -1, -1):
             stage_features = intermediate_hidden_states[i]
-            lateral_features = layers.Permute((3, 1, 2), name=f"neck_permute_{i}")(
-                stage_features
-            )
-            lateral_features = fpn_convs[n - i](lateral_features)
+            lateral_features = fpn_convs[n - i](stage_features)
 
             if i not in fpn_top_down_levels or i == n:
                 prev_features = lateral_features
@@ -356,22 +346,18 @@ class SAM2(keras.Model):
                 top_down = layers.UpSampling2D(
                     size=2,
                     interpolation="nearest",
-                    data_format="channels_first",
                     name=f"neck_upsample_{i}",
                 )(prev_features)
                 prev_features = layers.Add(name=f"neck_add_{i}")(
                     [lateral_features, top_down]
                 )
 
-            pe = fpn_position_encoding(ops.transpose(prev_features, (0, 2, 3, 1)))
             fpn_hidden_states_list.append(prev_features)
-            fpn_pe_list.append(pe)
 
         fpn_hidden_states_list = fpn_hidden_states_list[-self.NUM_FEATURE_LEVELS :][
             ::-1
         ]
-        fpn_pe_list = fpn_pe_list[-self.NUM_FEATURE_LEVELS :][::-1]
-        image_embeddings = ops.transpose(fpn_hidden_states_list[-1], (0, 2, 3, 1))
+        image_embeddings = fpn_hidden_states_list[-1]
 
         no_mem_embed_layer = SAM2NoMemoryEmbedding(
             hidden_size=self.FPN_HIDDEN_SIZE,
@@ -379,6 +365,7 @@ class SAM2(keras.Model):
         )
         image_embeddings = no_mem_embed_layer(image_embeddings)
 
+        # High-res features are now NHWC from FPN
         high_res_feat_s0 = fpn_hidden_states_list[0]
         high_res_feat_s1 = fpn_hidden_states_list[1]
 
