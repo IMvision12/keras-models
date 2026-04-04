@@ -38,6 +38,7 @@ from kmodels.models import (
     rt_detr,
     sam,
     sam2,
+    sam3,
     segformer,
     senet,
     siglip,
